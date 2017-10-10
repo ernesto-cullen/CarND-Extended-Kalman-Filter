@@ -1,129 +1,170 @@
-# Extended Kalman Filter Project Starter Code
-Self-Driving Car Engineer Nanodegree Program
+# Extended Kalman Filter Project
+### Self-Driving Car Engineer Nanodegree Program
 
-In this project you will utilize a kalman filter to estimate the state of a moving object of interest with noisy lidar and radar measurements. Passing the project requires obtaining RMSE values that are lower that the tolerance outlined in the project rubric. 
+In this project we implement a Kalman Filter in C++ to estimate the state (posicion and velocity in 2D) of a moving object. The measurements come from two noisy sensors, a lidar and a radar. Measurements from these two sensors will be fused to enhance the estimation.
 
-This project involves the Term 2 Simulator which can be downloaded [here](https://github.com/udacity/self-driving-car-sim/releases)
 
-This repository includes two files that can be used to set up and install [uWebSocketIO](https://github.com/uWebSockets/uWebSockets) for either Linux or Mac systems. For windows you can use either Docker, VMware, or even [Windows 10 Bash on Ubuntu](https://www.howtogeek.com/249966/how-to-install-and-use-the-linux-bash-shell-on-windows-10/) to install uWebSocketIO. Please see [this concept in the classroom](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/0949fca6-b379-42af-a919-ee50aa304e6a/lessons/f758c44c-5e40-4e01-93b5-1a82aa4e044f/concepts/16cf4a78-4fc7-49e1-8621-3450ca938b77) for the required version and installation scripts.
+This project uses the [Term 2 simulator](https://github.com/udacity/self-driving-car-sim/releases). The simulator will show a car doing a predetermined circuit, along with the measurements taken and the estimations computed. The simulator communicates with the project using uWebSockets library (the specific commit that works with this version of the simulator is included in the source) to get the estimations as they are calculated, as long as the root mean squared error (RMSE) against the real data (ground thruth).
 
-Once the install for uWebSocketIO is complete, the main program can be built and run by doing the following from the project top directory.
+The project will simulate the real process:
 
-1. mkdir build
-2. cd build
-3. cmake ..
-4. make
-5. ./ExtendedKF
+1. take an initial measurement, use it to initialize the system
+2. predict the next state of the vehicle
+3. get a new measurement, adjust the prediction
+4. repeat from point 2.
 
-Tips for setting up your environment can be found [here](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/0949fca6-b379-42af-a919-ee50aa304e6a/lessons/f758c44c-5e40-4e01-93b5-1a82aa4e044f/concepts/23d376c7-0195-4276-bdf0-e02f1f3c665d)
-
-Note that the programs that need to be written to accomplish the project are src/FusionEKF.cpp, src/FusionEKF.h, kalman_filter.cpp, kalman_filter.h, tools.cpp, and tools.h
-
-The program main.cpp has already been filled out, but feel free to modify it.
+In this case, the project use a file with entries simulating the sensor measurements.
 
 Here is the main protcol that main.cpp uses for uWebSocketIO in communicating with the simulator.
 
-
 INPUT: values provided by the simulator to the c++ program
-
+```
 ["sensor_measurement"] => the measurement that the simulator observed (either lidar or radar)
-
+```
 
 OUTPUT: values provided by the c++ program to the simulator
-
+```
 ["estimate_x"] <= kalman filter estimated position x
 ["estimate_y"] <= kalman filter estimated position y
 ["rmse_x"]
 ["rmse_y"]
 ["rmse_vx"]
 ["rmse_vy"]
+```
 
----
+I've removed the FusionEKF class and moved all code to KalmanFilter class, as I see no gain from using the FusionEKF class.
 
-## Other Important Dependencies
+Code was edited, compiled, and debugged on Ubuntu 16.04 using [CLion IDE](https://www.jetbrains.com/clion/) which can open an existing project and configure itself using the existing cmake and make files.
 
-* cmake >= 3.5
-  * All OSes: [click here for installation instructions](https://cmake.org/install/)
-* make >= 4.1 (Linux, Mac), 3.81 (Windows)
-  * Linux: make is installed by default on most Linux distros
-  * Mac: [install Xcode command line tools to get make](https://developer.apple.com/xcode/features/)
-  * Windows: [Click here for installation instructions](http://gnuwin32.sourceforge.net/packages/make.htm)
-* gcc/g++ >= 5.4
-  * Linux: gcc / g++ is installed by default on most Linux distros
-  * Mac: same deal as make - [install Xcode command line tools](https://developer.apple.com/xcode/features/)
-  * Windows: recommend using [MinGW](http://www.mingw.org/)
 
-## Basic Build Instructions
+## The code
 
-1. Clone this repo.
-2. Make a build directory: `mkdir build && cd build`
-3. Compile: `cmake .. && make` 
-   * On windows, you may need to run: `cmake .. -G "Unix Makefiles" && make`
-4. Run it: `./ExtendedKF `
+The code is very straightforward in the steps that it follows:
 
-## Editor Settings
+1. configure itself as a server listening in port 4567
+```cpp
+  uWS::Hub h;
 
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
+  int port = 4567;
+  if (h.listen(port)) {
+    std::cout << "Listening to port " << port << std::endl;
+  } else {
+    std::cerr << "Failed to listen to port" << std::endl;
+    return -1;
+  }
+  h.run();
+  ```
 
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
+2. The simulator will look for this port and connect to send data and receive calculations. The project calls different functions to respond to the events, like connection and disconnection:
+```cpp
+  h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
+    std::cout << "Connected!!!" << std::endl;
+  });
 
-## Code Style
+  h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
+    ws.close();
+    std::cout << "Disconnected" << std::endl;
+  });
+  ```
 
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
+3. for each message received from the simulator, the project will parse the sensor data and send it to the KalmanFilter instance for processing. Then it will receive the estimations and RMSE and send them back to the simulator for display. The code is in the `onMessage()` function
 
-## Generating Additional Data
+4. processing happens in method `processMeasurement()` from KalmanFilter class. This method receives the sensor data and computes the estimation for the next state.
+```cpp
+void KalmanFilter::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
+  /*****************************************************************************
+   *  Initialization
+   ****************************************************************************/
+  if (!is_initialized_) {
+    MatrixXd H;
+    MatrixXd R;
+    previous_timestamp_ = measurement_pack.timestamp_;
+    if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR) {
+      /**
+      Convert radar from polar to cartesian coordinates and initialize state.
+      */
+      x_ = Tools::polar2cartesian(measurement_pack.raw_measurements_);
+      H = Tools::jacobian(x_);
+      R = R_radar_;
+    }
+    else if (measurement_pack.sensor_type_ == MeasurementPackage::LASER) {
+      /**
+      Initialize state.
+      */
+      x_ << measurement_pack.raw_measurements_[0], measurement_pack.raw_measurements_[1], 0.6, 0;
+      H = H_laser_;
+      R = R_laser_;
+    }
 
-This is optional!
+    is_initialized_ = true;
+    return;
+  }
 
-If you'd like to generate your own radar and lidar data, see the
-[utilities repo](https://github.com/udacity/CarND-Mercedes-SF-Utilities) for
-Matlab scripts that can generate additional data.
+  /*****************************************************************************
+   *  Prediction
+   ****************************************************************************/
 
-## Project Instructions and Rubric
+  double dt = (measurement_pack.timestamp_ - previous_timestamp_) / 1.e6;
+  previous_timestamp_ = measurement_pack.timestamp_;
 
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
+  //update Q and F with elapsed time
+  updateQ(dt);
 
-More information is only accessible by people who are already enrolled in Term 2
-of CarND. If you are enrolled, see [the project resources page](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/0949fca6-b379-42af-a919-ee50aa304e6a/lessons/f758c44c-5e40-4e01-93b5-1a82aa4e044f/concepts/382ebfd6-1d55-4487-84a5-b6a5a4ba1e47)
-for instructions and the project rubric.
+  F_(0,2) = dt;
+  F_(1,3) = dt;
 
-## Hints and Tips!
+  Predict();
 
-* You don't have to follow this directory structure, but if you do, your work
-  will span all of the .cpp files here. Keep an eye out for TODOs.
-* Students have reported rapid expansion of log files when using the term 2 simulator.  This appears to be associated with not being connected to uWebSockets.  If this does occur,  please make sure you are conneted to uWebSockets. The following workaround may also be effective at preventing large log files.
+  /*****************************************************************************
+   *  Update
+   ****************************************************************************/
+  VectorXd z = measurement_pack.raw_measurements_;
+  VectorXd Hx;
+  MatrixXd R, H;
+  if (measurement_pack.sensor_type_ == MeasurementPackage::RADAR) {
+    H = Tools::jacobian(Tools::polar2cartesian(z));
+    Hx = Tools::cartesian2polar(x_);
+    R = R_radar_;
+  } else {
+    H = H_laser_;
+    Hx = H * x_;
+    R = R_laser_;
+  }
+  Update(z, Hx, R, H);
+}
+```
 
-    + create an empty log file
-    + remove write permissions so that the simulator can't write to log
- * Please note that the ```Eigen``` library does not initialize ```VectorXd``` or ```MatrixXd``` objects with zeros upon creation.
+5. Once the state has been updated, it is sent back to the simulator to display. In this communication, the RMSE is also computed and sent to the simulator.
+```cpp
+  VectorXd RMSE = tools.CalculateRMSE(estimations, ground_truth);
+```
 
-## Call for IDE Profiles Pull Requests
+where
 
-Help your fellow students!
+```cpp
+VectorXd Tools::CalculateRMSE(const vector<VectorXd> &estimations,
+                              const vector<VectorXd> &ground_truth) {
+  VectorXd rmse(4);
+  rmse.fill(0);
 
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to we ensure
-that students don't feel pressured to use one IDE or another.
+  for (int k = 0; k < estimations.size(); ++k){
+    VectorXd diff = estimations[k] - ground_truth[k];
+    diff = diff.array() * diff.array();
+    rmse += diff;
+  }
 
-However! We'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
+  rmse /= (double)estimations.size();
+  rmse = rmse.array().sqrt();
 
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
+  return rmse;
+}
+```
 
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
+This is done in a loop controlled by the simulator. In the end, the RMSE is very low which indicates the estimations are pretty close to the ground truth.
 
-Regardless of the IDE used, every submitted project must
-still be compilable with cmake and make.
 
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
 
+## Conclussion
+
+This project serves as a first step into the 'real' programming of sensor signal processing using C++. The simulator provides a welcomed visualization of the data, much more friendly than the raw matrices.
+I would like to have more time to play a little with the utilities provided like the data generator, maybe try to modify the simulator to follow a different path. I tried to do it anyway whenever I have a chance.
